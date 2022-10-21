@@ -1,8 +1,182 @@
 import {deployments, ethers} from 'hardhat';
 import {expect} from '../chai-setup';
-import {setupLand, setupLandV1} from './fixtures';
-const sizes = [1, 3, 6, 12, 24];
-const GRID_SIZE = 408;
+import {setupLand, setupLandV1, setupLandW} from './fixtures';
+const sizesW = [1, 3, 6, 12];
+const GRID_SIZEW = 300;
+
+describe('LandW', function () {
+  describe('LandBaseTokenW', function () {
+    // eslint-disable-next-line mocha/no-setup-in-describe
+    sizesW.forEach((size1) => {
+      sizesW.forEach((size2) => {
+        if (size2 >= size1) return;
+        it(`should NOT be able to transfer ${size2}x${size2} quad twice from ${size1}x${size1} quad`, async function () {
+          const {
+            landContract,
+            getNamedAccounts,
+            ethers,
+            mintQuad,
+          } = await setupLandW();
+          const {deployer, landAdmin} = await getNamedAccounts();
+          const contract = landContract.connect(
+            ethers.provider.getSigner(deployer)
+          );
+          await mintQuad(deployer, size1, 0, 0);
+          await contract.transferQuad(deployer, landAdmin, size2, 0, 0, '0x');
+          await expect(
+            contract.transferQuad(deployer, landAdmin, size2, 0, 0, '0x')
+          ).to.be.reverted;
+        });
+      });
+    });
+
+    // eslint-disable-next-line mocha/no-setup-in-describe
+    sizesW.forEach((size1) => {
+      sizesW.forEach((size2) => {
+        if (size2 >= size1) return;
+        it(`should NOT be able to transfer burned ${size2}x${size2} quad twice from ${size1}x${size1} quad`, async function () {
+          const {
+            landContract,
+            getNamedAccounts,
+            ethers,
+            mintQuad,
+          } = await setupLandW();
+          const {deployer, landAdmin} = await getNamedAccounts();
+          const contract = landContract.connect(
+            ethers.provider.getSigner(deployer)
+          );
+          await mintQuad(deployer, size1, 0, 0);
+          for (let x = 0; x < size2; x++) {
+            for (let y = 0; y < size2; y++) {
+              const tokenId = x + y * GRID_SIZEW;
+              await contract.burn(tokenId);
+            }
+          }
+          await expect(
+            contract.transferQuad(deployer, landAdmin, size1, 0, 0, '0x')
+          ).to.be.revertedWith('not owner');
+        });
+      });
+    });
+
+    it('Burnt land cannot be minted again', async function () {
+      const {
+        landContract,
+        getNamedAccounts,
+        ethers,
+        mintQuad,
+      } = await setupLandW();
+      const {deployer} = await getNamedAccounts();
+      const contract = landContract.connect(
+        ethers.provider.getSigner(deployer)
+      );
+      const x = 0;
+      const y = 0;
+      const tokenId = x + y * GRID_SIZEW;
+
+      await mintQuad(deployer, 3, x, y);
+
+      await contract.burn(tokenId);
+
+      await expect(mintQuad(deployer, 1, x, y)).to.be.revertedWith(
+        'Already minted as 3x3'
+      );
+    });
+
+    it('should not be a minter by default', async function () {
+      const {landContract, getNamedAccounts} = await setupLandW();
+      const {deployer} = await getNamedAccounts();
+
+      expect(await landContract.isMinter(deployer)).to.be.false;
+    });
+
+    it('should be an admin to set minter', async function () {
+      const {landContract, getNamedAccounts, ethers} = await setupLandW();
+      const {deployer} = await getNamedAccounts();
+      const contract = landContract.connect(
+        ethers.provider.getSigner(deployer)
+      );
+
+      await expect(contract.setMinter(deployer, true)).to.be.revertedWith(
+        'only admin allowed'
+      );
+
+      expect(await landContract.isMinter(deployer)).to.be.false;
+    });
+
+    it('should enable a minter', async function () {
+      const {landContract, getNamedAccounts, ethers} = await setupLandW();
+      const {deployer} = await getNamedAccounts();
+      const admin = await landContract.getAdmin();
+      const contract = landContract.connect(ethers.provider.getSigner(admin));
+
+      await expect(contract.setMinter(deployer, true)).not.to.be.reverted;
+
+      expect(await landContract.isMinter(deployer)).to.be.true;
+    });
+
+    it('should disable a minter', async function () {
+      const {landContract, getNamedAccounts, ethers} = await setupLandW();
+      const {deployer} = await getNamedAccounts();
+      const admin = await landContract.getAdmin();
+      const contract = landContract.connect(ethers.provider.getSigner(admin));
+
+      await expect(contract.setMinter(deployer, true)).not.to.be.reverted;
+      await expect(contract.setMinter(deployer, false)).not.to.be.reverted;
+
+      expect(await landContract.isMinter(deployer)).to.be.false;
+    });
+
+    it('should not accept address 0 as minter', async function () {
+      const {landContract, ethers} = await setupLandW();
+      const admin = await landContract.getAdmin();
+      const contract = landContract.connect(ethers.provider.getSigner(admin));
+
+      await expect(
+        contract.setMinter(ethers.constants.AddressZero, false)
+      ).to.be.revertedWith('address 0 is not allowed as minter');
+
+      await expect(
+        contract.setMinter(ethers.constants.AddressZero, true)
+      ).to.be.revertedWith('address 0 is not allowed as minter');
+
+      expect(await landContract.isMinter(ethers.constants.AddressZero)).to.be
+        .false;
+    });
+
+    it('should only be able to disable an enabled minter', async function () {
+      const {landContract, getNamedAccounts, ethers} = await setupLandW();
+      const {deployer} = await getNamedAccounts();
+      const admin = await landContract.getAdmin();
+      const contract = landContract.connect(ethers.provider.getSigner(admin));
+
+      await expect(contract.setMinter(deployer, true)).not.to.be.reverted;
+
+      expect(await landContract.isMinter(deployer)).to.be.true;
+
+      await expect(contract.setMinter(deployer, true)).to.be.revertedWith(
+        'the status should be different than the current one'
+      );
+      await expect(contract.setMinter(deployer, false)).not.to.be.reverted;
+    });
+
+    it('should only be able to enable a disabled minter', async function () {
+      const {landContract, getNamedAccounts, ethers} = await setupLandW();
+      const {deployer} = await getNamedAccounts();
+      const admin = await landContract.getAdmin();
+      const contract = landContract.connect(ethers.provider.getSigner(admin));
+
+      expect(await landContract.isMinter(deployer)).to.be.false;
+
+      await expect(contract.setMinter(deployer, false)).to.be.revertedWith(
+        'the status should be different than the current one'
+      );
+      await expect(contract.setMinter(deployer, true)).not.to.be.reverted;
+    });
+  });
+});
+const sizes = [1, 3, 6, 12];
+const GRID_SIZE = 300;
 
 describe('LandV2', function () {
   describe('LandBaseTokenV2', function () {
